@@ -1,0 +1,20 @@
+import Link from "next/link";
+import { LayoutDashboard, MonitorUp, UsersRound } from "lucide-react";
+
+export function BoardroomNav({ active }: { active: "master" | "team" }) {
+  return (
+    <header className="border-b border-slate-200 bg-[#f8fbf9]">
+      <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-5 py-4 lg:px-8">
+        <Link href="/leaderboard" className="flex items-center gap-3">
+          <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#083f41] text-lg font-black text-[#f3c969]">B</span>
+          <span><strong className="block font-display text-base tracking-tight text-[#073638]">BOARDROOM</strong><span className="block text-[10px] font-bold tracking-[0.16em] text-slate-500">CHALLENGE CONTROL</span></span>
+        </Link>
+        <nav className="flex rounded-xl border border-slate-200 bg-white p-1" aria-label="Platform views">
+          <Link href="/master" className={"flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold " + (active === "master" ? "bg-[#073f41] text-white" : "text-slate-600 hover:bg-slate-100")}><LayoutDashboard size={15} /> Master</Link>
+          <Link href="/team" className={"flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold " + (active === "team" ? "bg-[#073f41] text-white" : "text-slate-600 hover:bg-slate-100")}><UsersRound size={15} /> Team</Link>
+        </nav>
+        <Link href="/leaderboard" className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:text-[#0e6a68]"><MonitorUp size={16} /> <span className="hidden md:inline">Display</span></Link>
+      </div>
+    </header>
+  );
+}
