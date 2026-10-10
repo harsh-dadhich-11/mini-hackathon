@@ -1,7 +1,6 @@
-import { getChatGPTUser } from "@/app/chatgpt-auth";
 import type { Viewer } from "@/lib/event-store";
+import { getMasterViewer } from "@/lib/master-auth";
 
 export async function currentViewer(): Promise<Viewer | null> {
-  const user = await getChatGPTUser();
-  return user ? { email: user.email, displayName: user.displayName } : null;
+  return getMasterViewer();
 }

@@ -148,6 +148,18 @@ export const captainSessions = sqliteTable(
   (table) => [index("captain_sessions_team_idx").on(table.teamId)],
 );
 
+export const masterSessions = sqliteTable(
+  "master_sessions",
+  {
+    tokenHash: text("token_hash").primaryKey(),
+    email: text("email").notNull(),
+    createdAt: text("created_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    revokedAt: text("revoked_at"),
+  },
+  (table) => [index("master_sessions_email_idx").on(table.email)],
+);
+
 export const qualifications = sqliteTable(
   "qualifications",
   {

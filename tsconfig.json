@@ -29,8 +29,7 @@
       ]
     },
     "types": [
-      "node",
-      "@cloudflare/workers-types"
+      "node"
     ]
   },
   "include": [
@@ -42,6 +41,10 @@
     "**/*.mts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "dist",
+    ".wrangler",
+    ".vinext",
+    ".sites-runtime"
   ]
 }

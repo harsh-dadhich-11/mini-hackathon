@@ -110,7 +110,7 @@ export function TeamsTab({ overview, act, busy, setNotice }: TabProps) {
         <div className="mb-4 flex flex-wrap gap-2">{overview.masters.map((entry) => <div key={entry.email} className="rounded-xl bg-slate-50 px-3 py-2 text-sm"><p className="font-semibold text-slate-800">{entry.displayName}</p><p className="font-mono text-xs text-slate-500">{entry.email}</p></div>)}</div>
         <form onSubmit={addMaster} className="grid gap-2 sm:grid-cols-[1fr_1.4fr_auto]">
           <input required value={master.displayName} onChange={(event) => setMaster({ ...master, displayName: event.target.value })} placeholder="Name" className={inputClass} />
-          <input required type="email" value={master.email} onChange={(event) => setMaster({ ...master, email: event.target.value })} placeholder="ChatGPT sign-in email" className={inputClass} />
+          <input required type="email" value={master.email} onChange={(event) => setMaster({ ...master, email: event.target.value })} placeholder="Master email" className={inputClass} />
           <Btn variant="outline" disabled={busy || overview.masters.length >= 2}><Plus size={14} /> Add Master</Btn>
         </form>
       </Card>

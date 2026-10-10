@@ -62,6 +62,11 @@ export function MasterClient({ initial, viewerName }: { initial: Overview; viewe
     }
   };
 
+  async function signOut() {
+    await fetch("/api/master-auth/signout", { method: "POST" });
+    window.location.reload();
+  }
+
   // Times and countdowns use this device's clock and time zone, so render the workspace on the client only.
   const hydrated = useHydrated();
   const shared = { overview, act, busy, setNotice, serverOffset };
@@ -74,7 +79,7 @@ export function MasterClient({ initial, viewerName }: { initial: Overview; viewe
       <BoardroomNav active="master" />
       <section className="mx-auto max-w-7xl px-5 py-8 lg:px-8">
         <div className="mb-6 flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
-          <div><p className="mb-2 flex items-center gap-2 text-sm font-semibold text-[#0e6a68]"><ShieldCheck size={15} /> Master workspace</p><h1 className="font-display text-3xl font-bold tracking-tight text-[#063a3c]">Event control</h1><p className="mt-1 text-sm text-slate-600">Signed in as {viewerName}. Every change is recorded in the audit log.</p></div>
+          <div><p className="mb-2 flex items-center gap-2 text-sm font-semibold text-[#0e6a68]"><ShieldCheck size={15} /> Master workspace</p><h1 className="font-display text-3xl font-bold tracking-tight text-[#063a3c]">Event control</h1><p className="mt-1 text-sm text-slate-600">Signed in as {viewerName}. Every change is recorded in the audit log. <button type="button" onClick={signOut} className="font-semibold text-[#0e6a68] hover:underline">Sign out</button></p></div>
           <div className="flex gap-2"><span className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm">{activeTeams}/30 teams</span><span className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm">{overview.rounds.filter((round) => round.scenario).length}/{overview.rounds.length} questions loaded</span></div>
         </div>
 

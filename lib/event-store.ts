@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { connect, type Database, type PreparedStatement } from "@/lib/db";
 import { cutoffTie, rankTeams, scoreSubmission, type Ranked, type Total } from "@/lib/scoring";
 
 export type Viewer = { email: string; displayName: string };
@@ -63,9 +63,8 @@ const V4_ROUNDS = [
   ["round-6", 6, "Round 6 · The Acquisition", "final", 360, 1],
 ] as const;
 
-export function database(): D1Database {
-  if (!env.DB) throw new Error("Event storage is unavailable.");
-  return env.DB;
+export function database(): Database {
+  return connect();
 }
 
 export async function audit(actor: string, action: string, target: string, detail: unknown) {
@@ -433,7 +432,7 @@ export async function scoreRound(viewer: Viewer, roundId: string) {
     "SELECT t.id AS teamId, COALESCE(s.choices_json, '[]') AS choicesJson FROM teams t LEFT JOIN submissions s ON s.team_id = t.id AND s.round_id = ? WHERE t.is_active = 1",
   ).bind(round.id).all<{ teamId: string; choicesJson: string }>();
   const timestamp = now();
-  const writes: D1PreparedStatement[] = [];
+  const writes: PreparedStatement[] = [];
   for (const row of rows.results) {
     const points = scoreSubmission(parseStrings(row.choicesJson), answers);
     // Re-scoring keeps any Master override in place.
