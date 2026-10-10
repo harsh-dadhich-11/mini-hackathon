@@ -9,7 +9,8 @@ export async function sendCaptainAccessEmail(input: { to: string; teamName: stri
   const apiKey = env.RESEND_API_KEY;
   const from = env.MAIL_FROM;
   if (!apiKey || !from) {
-    console.log(`[mailer] RESEND_API_KEY/MAIL_FROM not set. Code for ${input.to}: ${input.code}`);
+    // Never disclose an OTP through server logs. The Master console receives only a delivery failure.
+    console.warn("[mailer] RESEND_API_KEY/MAIL_FROM not set; Captain OTP was not delivered.");
     return { delivered: false };
   }
   const response = await fetch("https://api.resend.com/emails", {
