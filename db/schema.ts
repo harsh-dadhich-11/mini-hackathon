@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const eventSettings = sqliteTable("event_settings", {
   key: text("key").primaryKey(),
@@ -21,6 +21,7 @@ export const teams = sqliteTable(
     captainName: text("captain_name").notNull(),
     captainEmail: text("captain_email").notNull(),
     isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    lastSignInAt: text("last_sign_in_at"),
     createdAt: text("created_at").notNull(),
   },
   (table) => [
@@ -40,10 +41,12 @@ export const rounds = sqliteTable(
     scenario: text("scenario").notNull().default(""),
     optionsJson: text("options_json").notNull().default("[]"),
     answersJson: text("answers_json").notNull().default("[]"),
+    evidenceJson: text("evidence_json").notNull().default("[]"),
     multiplier: integer("multiplier").notNull().default(1),
     state: text("state").notNull().default("draft"),
     openedAt: text("opened_at"),
     closesAt: text("closes_at"),
+    pausedRemainingMs: integer("paused_remaining_ms"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
@@ -77,6 +80,9 @@ export const scoreLines = sqliteTable(
     roundId: text("round_id").notNull().references(() => rounds.id),
     phase: text("phase").notNull(),
     points: integer("points").notNull(),
+    overridePoints: integer("override_points"),
+    overrideReason: text("override_reason"),
+    overriddenBy: text("overridden_by"),
     calculatedAt: text("calculated_at").notNull(),
   },
   (table) => [
@@ -109,4 +115,49 @@ export const auditLog = sqliteTable(
     createdAt: text("created_at").notNull(),
   },
   (table) => [index("audit_log_created_idx").on(table.createdAt)],
+);
+
+export const captainCodes = sqliteTable(
+  "captain_codes",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    codeHash: text("code_hash").notNull(),
+    linkHash: text("link_hash").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    expiresAt: text("expires_at").notNull(),
+    usedAt: text("used_at"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("captain_codes_email_idx").on(table.email, table.createdAt),
+    uniqueIndex("captain_codes_link_unique").on(table.linkHash),
+  ],
+);
+
+export const captainSessions = sqliteTable(
+  "captain_sessions",
+  {
+    tokenHash: text("token_hash").primaryKey(),
+    teamId: text("team_id").notNull().references(() => teams.id),
+    email: text("email").notNull(),
+    createdAt: text("created_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    revokedAt: text("revoked_at"),
+  },
+  (table) => [index("captain_sessions_team_idx").on(table.teamId)],
+);
+
+export const qualifications = sqliteTable(
+  "qualifications",
+  {
+    stage: text("stage").notNull(),
+    teamId: text("team_id").notNull().references(() => teams.id),
+    rank: integer("rank").notNull(),
+    score: integer("score").notNull(),
+    rulingNote: text("ruling_note"),
+    decidedBy: text("decided_by").notNull(),
+    decidedAt: text("decided_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.stage, table.teamId] })],
 );
