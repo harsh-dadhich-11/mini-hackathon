@@ -1,14 +1,14 @@
 /**
  * Sends an access email through the Resend HTTP API.
- * Without RESEND_API_KEY / MAIL_FROM (local dev, or no secret on the host) it logs instead
+ * Without RESEND_API_KEY / RESEND_FROM_EMAIL (local dev, or no secret on the host) it logs instead
  * and reports `delivered: false` for a visible Master-console warning.
  */
 async function sendEmail(input: { to: string; subject: string; text: string }) {
   const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.MAIL_FROM;
+  const from = process.env.RESEND_FROM_EMAIL;
   if (!apiKey || !from) {
     // Never disclose an OTP through server logs. The Master console receives only a delivery failure.
-    console.warn("[mailer] RESEND_API_KEY/MAIL_FROM not set; access code was not delivered.");
+    console.warn("[mailer] RESEND_API_KEY/RESEND_FROM_EMAIL not set; access code was not delivered.");
     return { delivered: false };
   }
   const response = await fetch("https://api.resend.com/emails", {

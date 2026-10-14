@@ -56,3 +56,13 @@ button, input { font: inherit; }
 button { cursor: pointer; }
 .font-display { font-family: Georgia, "Times New Roman", serif; }
 ::selection { background: #a9d9ce; color: #06292c; }
+
+/* Reveal celebrations: a slow gold glow for the Boardroom #1 card and the winner. */
+@keyframes boardroom-glow {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(232, 184, 91, 0.6), 0 0 24px rgba(232, 184, 91, 0.25); }
+  50% { box-shadow: 0 0 0 2px rgba(244, 200, 102, 0.9), 0 0 56px rgba(232, 184, 91, 0.55); }
+}
+.reveal-glow { animation: boardroom-glow 2.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .reveal-glow { animation: none; box-shadow: 0 0 0 2px rgba(232, 184, 91, 0.8); }
+}

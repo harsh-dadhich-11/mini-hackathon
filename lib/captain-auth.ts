@@ -1,28 +1,17 @@
 import { cookies } from "next/headers";
 import { audit, database, eventReady, normaliseEmail, requireMaster, type TeamRecord, type Viewer } from "@/lib/event-store";
 import { sendCaptainAccessEmail } from "@/lib/mailer";
+import { checkCode, claimCode, codeRecentlySent, discardCodes, INVALID_CODE, issueCode, sha256 } from "@/lib/otp";
 
 export const CAPTAIN_COOKIE = "bc_captain";
 export const SESSION_HOURS = 12;
-const CODE_MINUTES = 10;
-const MAX_ATTEMPTS = 5;
-const RESEND_COOLDOWN_MS = 60_000;
 
 export const now = () => new Date().toISOString();
 export const later = (ms: number) => new Date(Date.now() + ms).toISOString();
 
-export async function sha256(value: string) {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 export function randomToken() {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function randomCode() {
-  return String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0");
 }
 
 const TEAM_COLUMNS = "t.id, t.name, t.table_number AS tableNumber, t.captain_name AS captainName, t.captain_email AS captainEmail, t.is_active AS isActive";
@@ -38,25 +27,6 @@ async function activeTeamById(teamId: string) {
   return team;
 }
 
-/** Replaces any earlier code for this email with a new six-digit single-use OTP. Shared by Captain and Master sign-in. */
-export async function issueCode(email: string) {
-  const code = randomCode();
-  // `link_hash` remains populated for the additive legacy schema, but no magic-link sign-in is exposed.
-  const unusedToken = randomToken();
-  const db = database();
-  await db.batch([
-    db.prepare("DELETE FROM captain_codes WHERE email = ? AND used_at IS NULL").bind(email),
-    db.prepare("INSERT INTO captain_codes (id, email, code_hash, link_hash, attempts, expires_at, created_at) VALUES (?, ?, ?, ?, 0, ?, ?)")
-      .bind(crypto.randomUUID(), email, await sha256(code), await sha256(unusedToken), later(CODE_MINUTES * 60_000), now()),
-  ]);
-  return { code };
-}
-
-export async function codeRecentlySent(email: string) {
-  const recent = await database().prepare("SELECT created_at AS createdAt FROM captain_codes WHERE email = ? ORDER BY created_at DESC LIMIT 1").bind(email).first<{ createdAt: string }>();
-  return Boolean(recent && Date.now() - Date.parse(recent.createdAt) < RESEND_COOLDOWN_MS);
-}
-
 /** Public request. Always succeeds from the caller's point of view, so it never reveals who is on the roster. */
 export async function requestCaptainAccess(rawEmail: string) {
   if (!(await eventReady())) return;
@@ -65,13 +35,13 @@ export async function requestCaptainAccess(rawEmail: string) {
   if (!team) return;
   if (await codeRecentlySent(email)) return;
   const { code } = await issueCode(email);
-  await sendCaptainAccessEmail({ to: email, teamName: team.name, code });
-  await audit(email, "captain.code_requested", team.id, {});
+  const result = await sendCaptainAccessEmail({ to: email, teamName: team.name, code });
+  await audit(email, "captain.code_requested", team.id, { delivered: result.delivered });
 }
 
 export async function masterSendAccess(viewer: Viewer, teamId: string) {
   await requireMaster(viewer);
-  if (!(await eventReady())) throw new Error("Finish the two-Master and 30-team roster before sending Captain access.");
+  if (!(await eventReady())) throw new Error("Add at least one active team before sending Captain access.");
   const team = await activeTeamById(teamId);
   const { code } = await issueCode(team.captainEmail);
   const result = await sendCaptainAccessEmail({ to: team.captainEmail, teamName: team.name, code });
@@ -86,7 +56,7 @@ export async function masterRevokeAccess(viewer: Viewer, teamId: string) {
   if (!team) throw new Error("Team not found.");
   await db.batch([
     db.prepare("UPDATE captain_sessions SET revoked_at = ? WHERE team_id = ? AND revoked_at IS NULL").bind(now(), teamId),
-    db.prepare("DELETE FROM captain_codes WHERE email = ? AND used_at IS NULL").bind(team.captainEmail),
+    discardCodes(team.captainEmail),
   ]);
   await audit(viewer.email, "captain.access_revoked", teamId, {});
 }
@@ -102,29 +72,6 @@ async function createSession(team: TeamRecord) {
   ]);
   await audit(team.captainEmail, "captain.signed_in", team.id, {});
   return token;
-}
-
-export const INVALID_CODE = "That code is not valid. Check it, or request a new one.";
-
-/** Matches the newest unexpired, unused code for this email; a wrong code counts as a failed attempt. Returns the code id. */
-export async function checkCode(email: string, rawCode: string) {
-  const code = rawCode.replace(/\D/g, "");
-  const db = database();
-  const row = await db.prepare(
-    "SELECT id, code_hash AS codeHash, attempts FROM captain_codes WHERE email = ? AND used_at IS NULL AND expires_at > ? ORDER BY created_at DESC LIMIT 1",
-  ).bind(email, now()).first<{ id: string; codeHash: string; attempts: number }>();
-  if (!row || row.attempts >= MAX_ATTEMPTS) throw new Error(INVALID_CODE);
-  if (row.codeHash !== await sha256(code)) {
-    await db.prepare("UPDATE captain_codes SET attempts = attempts + 1 WHERE id = ?").bind(row.id).run();
-    throw new Error(INVALID_CODE);
-  }
-  return row.id;
-}
-
-/** Marks a code used exactly once, so two concurrent verifications can't both succeed. */
-export async function claimCode(codeId: string) {
-  const claimed = await database().prepare("UPDATE captain_codes SET used_at = ? WHERE id = ? AND used_at IS NULL").bind(now(), codeId).run();
-  if (!claimed.meta.changes) throw new Error(INVALID_CODE);
 }
 
 export async function verifyCaptainCode(rawEmail: string, rawCode: string) {

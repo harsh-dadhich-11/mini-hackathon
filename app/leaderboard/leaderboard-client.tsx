@@ -1,15 +1,37 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Award, Crown, Gauge, Medal, Pause, Trophy, UsersRound } from "lucide-react";
 import Link from "next/link";
 import type { getPublicDisplay } from "@/lib/event-store";
+import { burst, grandFinale } from "@/lib/celebrate";
+import { usePoll } from "@/lib/use-poll";
 import { useServerClock } from "@/lib/use-server-clock";
 
 export type PublicDisplay = Awaited<ReturnType<typeof getPublicDisplay>>;
 type Team = { teamId: string; name: string; score: number; rank: number };
 
 const POLL_MS = 2000;
+
+/** Which reveal sequence is on screen and how far it has got. Celebrations fire when the step moves forward. */
+function revealProgress(display: PublicDisplay) {
+  switch (display.mode) {
+    case "reveal": return { key: "reveal:" + display.title, step: display.step };
+    case "qualifiers": return { key: "qualifiers:" + display.stage, step: display.step };
+    case "awards": return { key: "awards", step: display.step };
+    default: return { key: display.mode, step: 0 };
+  }
+}
+
+function celebrate(display: PublicDisplay) {
+  if (display.mode === "reveal") {
+    if (display.step >= 3) grandFinale(); else if (display.step > 0) burst(display.step as 1 | 2);
+  } else if (display.mode === "qualifiers") {
+    burst(display.step >= display.total ? 3 : 1);
+  } else if (display.mode === "awards") {
+    if (display.step >= 3) grandFinale(); else burst(2);
+  }
+}
 
 function formatSeconds(ms: number) {
   const seconds = Math.max(0, Math.ceil(ms / 1000));
@@ -19,17 +41,23 @@ function formatSeconds(ms: number) {
 export function LeaderboardClient({ initial }: { initial: PublicDisplay }) {
   const [display, setDisplay] = useState(initial);
   const { serverNowMs, sync } = useServerClock(initial.serverNow);
+  // Starts at what the page loaded with, so refreshing the projector mid-reveal stays quiet.
+  const shown = useRef(revealProgress(initial));
 
   useEffect(() => {
-    const poll = window.setInterval(async () => {
-      const response = await fetch("/api/display", { cache: "no-store" }).catch(() => null);
-      if (!response?.ok) return;
-      const next = await response.json() as PublicDisplay;
-      sync(next.serverNow);
-      setDisplay(next);
-    }, POLL_MS);
-    return () => window.clearInterval(poll);
-  }, [sync]);
+    const next = revealProgress(display);
+    const previousStep = next.key === shown.current.key ? shown.current.step : 0;
+    shown.current = next;
+    if (next.step > previousStep) celebrate(display);
+  }, [display]);
+
+  usePoll(async () => {
+    const response = await fetch("/api/display", { cache: "no-store" }).catch(() => null);
+    if (!response?.ok) return;
+    const next = await response.json() as PublicDisplay;
+    sync(next.serverNow);
+    setDisplay(next);
+  }, POLL_MS);
 
   return (
     <main className="min-h-screen bg-[#06292c] text-white">
@@ -83,12 +111,14 @@ function renderMode(display: PublicDisplay, serverNowMs: number) {
 
     case "reveal":
       return <>
-        <Heading eyebrow={`${display.title} · The Boardroom Choices`} title={display.step === 0 ? "What did the Boardroom choose?" : display.step === 3 ? "The Boardroom has spoken" : `Boardroom #${4 - display.step}`} icon={<Award size={16} />} />
+        <div key={display.step} className="animate-in fade-in zoom-in-95 duration-500">
+          <Heading eyebrow={`${display.title} · The Boardroom Choices`} title={display.step === 0 ? "What did the Boardroom choose?" : display.step === 3 ? "The Boardroom has spoken" : `Boardroom #${4 - display.step}`} icon={<Award size={16} />} />
+        </div>
         <div className="grid flex-1 content-start gap-4">
           {[...display.revealed].reverse().map((choice) => (
-            <div key={choice.rank} className="animate-in fade-in slide-in-from-bottom-4 rounded-3xl border border-[#e8b85b]/40 bg-white/[0.05] p-6 duration-700">
+            <div key={choice.rank} className={"animate-in fade-in zoom-in-95 slide-in-from-bottom-4 rounded-3xl border p-6 duration-700 " + (choice.rank === 1 ? "reveal-glow border-[#e8b85b] bg-[#e8b85b]/10" : "border-[#e8b85b]/40 bg-white/[0.05]")}>
               <div className="flex items-start gap-5">
-                <span className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-[#e8b85b] font-display text-2xl font-black text-[#073638]">#{choice.rank}</span>
+                <span className={"grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-[#e8b85b] font-display text-2xl font-black text-[#073638] " + (choice.rank === 1 ? "animate-in spin-in-12 zoom-in-50 duration-700" : "")}>{choice.rank === 1 ? <Crown size={28} /> : "#" + choice.rank}</span>
                 <div><p className="text-2xl font-semibold leading-snug"><span className="mr-2 text-[#e8b85b]">{choice.optionId}.</span>{choice.text}</p>{choice.evidence && <p className="mt-3 text-lg leading-relaxed text-[#c3dcd7]">{choice.evidence}</p>}<p className="mt-3 font-mono text-sm text-[#9cc3bd]">{[40, 30, 20][choice.rank - 1]} points{choice.rank === 1 ? " · +10 if it was your first pick" : ""}</p></div>
               </div>
             </div>
@@ -120,7 +150,7 @@ function renderMode(display: PublicDisplay, serverNowMs: number) {
 
 function AwardCard({ icon, title, team, gold }: { icon: React.ReactNode; title: string; team: Team | null | undefined; gold?: boolean }) {
   return (
-    <div className={"flex min-h-64 flex-col justify-between rounded-3xl border p-7 " + (gold ? "border-[#e8b85b] bg-[#e8b85b]/10" : "border-white/15 bg-white/[0.04]")}>
+    <div className={"flex min-h-64 flex-col justify-between rounded-3xl border p-7 " + (gold ? "border-[#e8b85b] bg-[#e8b85b]/10" : "border-white/15 bg-white/[0.04]") + (gold && team ? " reveal-glow" : "")}>
       <div className={"flex items-center gap-3 text-lg font-semibold uppercase tracking-[0.12em] " + (gold ? "text-[#e8b85b]" : "text-[#b8d8d1]")}>{icon} {title}</div>
       {team === undefined ? <p className="font-display text-5xl font-bold text-white/20">?</p> : team === null ? <p className="text-xl text-[#c3dcd7]">Not awarded</p> : <div className="animate-in fade-in zoom-in-95 duration-700"><p className="font-display text-4xl font-bold leading-tight">{team.name}</p><p className="mt-2 font-mono text-lg text-[#c3dcd7]">{team.score} pts</p></div>}
     </div>

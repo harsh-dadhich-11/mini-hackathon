@@ -1,18 +1,22 @@
-import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, pgTable, primaryKey, text, uniqueIndex } from "drizzle-orm/pg-core";
 
-export const eventSettings = sqliteTable("event_settings", {
+// Supabase Postgres. Timestamps stay ISO-8601 text so the event store compares them exactly as before.
+// Every table enables row-level security with no policies: Supabase's public REST API cannot read or
+// write them, and only the server's direct DATABASE_URL connection (table owner) can.
+
+export const eventSettings = pgTable("event_settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
   updatedAt: text("updated_at").notNull(),
-});
+}).enableRLS();
 
-export const masters = sqliteTable("masters", {
+export const masters = pgTable("masters", {
   email: text("email").primaryKey(),
   displayName: text("display_name").notNull(),
   addedAt: text("added_at").notNull(),
-});
+}).enableRLS();
 
-export const teams = sqliteTable(
+export const teams = pgTable(
   "teams",
   {
     id: text("id").primaryKey(),
@@ -20,7 +24,7 @@ export const teams = sqliteTable(
     tableNumber: text("table_number").notNull(),
     captainName: text("captain_name").notNull(),
     captainEmail: text("captain_email").notNull(),
-    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    isActive: integer("is_active").notNull().default(1),
     lastSignInAt: text("last_sign_in_at"),
     createdAt: text("created_at").notNull(),
   },
@@ -28,9 +32,9 @@ export const teams = sqliteTable(
     uniqueIndex("teams_captain_email_unique").on(table.captainEmail),
     uniqueIndex("teams_name_unique").on(table.name),
   ],
-);
+).enableRLS();
 
-export const rounds = sqliteTable(
+export const rounds = pgTable(
   "rounds",
   {
     id: text("id").primaryKey(),
@@ -54,9 +58,9 @@ export const rounds = sqliteTable(
     uniqueIndex("rounds_order_unique").on(table.roundOrder),
     index("rounds_state_order_idx").on(table.state, table.roundOrder),
   ],
-);
+).enableRLS();
 
-export const submissions = sqliteTable(
+export const submissions = pgTable(
   "submissions",
   {
     id: text("id").primaryKey(),
@@ -70,9 +74,9 @@ export const submissions = sqliteTable(
     uniqueIndex("submissions_team_round_unique").on(table.teamId, table.roundId),
     index("submissions_round_idx").on(table.roundId),
   ],
-);
+).enableRLS();
 
-export const scoreLines = sqliteTable(
+export const scoreLines = pgTable(
   "score_lines",
   {
     id: text("id").primaryKey(),
@@ -89,9 +93,9 @@ export const scoreLines = sqliteTable(
     uniqueIndex("score_lines_team_round_unique").on(table.teamId, table.roundId),
     index("score_lines_phase_team_idx").on(table.phase, table.teamId),
   ],
-);
+).enableRLS();
 
-export const leaderboardSnapshots = sqliteTable(
+export const leaderboardSnapshots = pgTable(
   "leaderboard_snapshots",
   {
     id: text("id").primaryKey(),
@@ -102,9 +106,9 @@ export const leaderboardSnapshots = sqliteTable(
     publishedBy: text("published_by").notNull(),
   },
   (table) => [index("leaderboard_snapshots_published_idx").on(table.publishedAt)],
-);
+).enableRLS();
 
-export const auditLog = sqliteTable(
+export const auditLog = pgTable(
   "audit_log",
   {
     id: text("id").primaryKey(),
@@ -115,27 +119,24 @@ export const auditLog = sqliteTable(
     createdAt: text("created_at").notNull(),
   },
   (table) => [index("audit_log_created_idx").on(table.createdAt)],
-);
+).enableRLS();
 
-export const captainCodes = sqliteTable(
-  "captain_codes",
+/** Six-digit email sign-in codes for Captains and Masters, sent through Resend. Only hashes are stored. */
+export const loginCodes = pgTable(
+  "login_codes",
   {
     id: text("id").primaryKey(),
     email: text("email").notNull(),
     codeHash: text("code_hash").notNull(),
-    linkHash: text("link_hash").notNull(),
     attempts: integer("attempts").notNull().default(0),
     expiresAt: text("expires_at").notNull(),
     usedAt: text("used_at"),
     createdAt: text("created_at").notNull(),
   },
-  (table) => [
-    index("captain_codes_email_idx").on(table.email, table.createdAt),
-    uniqueIndex("captain_codes_link_unique").on(table.linkHash),
-  ],
-);
+  (table) => [index("login_codes_email_idx").on(table.email, table.createdAt)],
+).enableRLS();
 
-export const captainSessions = sqliteTable(
+export const captainSessions = pgTable(
   "captain_sessions",
   {
     tokenHash: text("token_hash").primaryKey(),
@@ -146,9 +147,9 @@ export const captainSessions = sqliteTable(
     revokedAt: text("revoked_at"),
   },
   (table) => [index("captain_sessions_team_idx").on(table.teamId)],
-);
+).enableRLS();
 
-export const masterSessions = sqliteTable(
+export const masterSessions = pgTable(
   "master_sessions",
   {
     tokenHash: text("token_hash").primaryKey(),
@@ -158,9 +159,9 @@ export const masterSessions = sqliteTable(
     revokedAt: text("revoked_at"),
   },
   (table) => [index("master_sessions_email_idx").on(table.email)],
-);
+).enableRLS();
 
-export const qualifications = sqliteTable(
+export const qualifications = pgTable(
   "qualifications",
   {
     stage: text("stage").notNull(),
@@ -172,4 +173,4 @@ export const qualifications = sqliteTable(
     decidedAt: text("decided_at").notNull(),
   },
   (table) => [primaryKey({ columns: [table.stage, table.teamId] })],
-);
+).enableRLS();

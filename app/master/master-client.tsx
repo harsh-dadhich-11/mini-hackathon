@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { usePoll } from "@/lib/use-poll";
 import { useHydrated } from "@/lib/use-server-clock";
 import { ShieldCheck } from "lucide-react";
 import { BoardroomNav } from "@/components/boardroom-nav";
@@ -40,10 +41,7 @@ export function MasterClient({ initial, viewerName }: { initial: Overview; viewe
     setOverview(next);
   }
 
-  useEffect(() => {
-    const timer = window.setInterval(refresh, POLL_MS);
-    return () => window.clearInterval(timer);
-  }, []);
+  usePoll(refresh, POLL_MS);
 
   const act: Act = async (payload, success) => {
     setBusy(true);
@@ -72,7 +70,8 @@ export function MasterClient({ initial, viewerName }: { initial: Overview; viewe
   const shared = { overview, act, busy, setNotice, serverOffset };
   if (!hydrated) return <main className="min-h-screen bg-[#eff4f2]"><BoardroomNav active="master" /></main>;
   const activeTeams = overview.teams.filter((team) => team.isActive).length;
-  const eventReady = overview.masters.length === 2 && activeTeams === 30 && overview.rounds.length === 6;
+  const questionsLoaded = overview.rounds.filter((round) => round.scenario).length;
+  const eventReady = activeTeams > 0 && questionsLoaded === overview.rounds.length;
 
   return (
     <main className="min-h-screen bg-[#eff4f2]">
@@ -80,10 +79,10 @@ export function MasterClient({ initial, viewerName }: { initial: Overview; viewe
       <section className="mx-auto max-w-7xl px-5 py-8 lg:px-8">
         <div className="mb-6 flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
           <div><p className="mb-2 flex items-center gap-2 text-sm font-semibold text-[#0e6a68]"><ShieldCheck size={15} /> Master workspace</p><h1 className="font-display text-3xl font-bold tracking-tight text-[#063a3c]">Event control</h1><p className="mt-1 text-sm text-slate-600">Signed in as {viewerName}. Every change is recorded in the audit log. <button type="button" onClick={signOut} className="font-semibold text-[#0e6a68] hover:underline">Sign out</button></p></div>
-          <div className="flex gap-2"><span className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm">{activeTeams}/30 teams</span><span className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm">{overview.rounds.filter((round) => round.scenario).length}/{overview.rounds.length} questions loaded</span></div>
+          <div className="flex gap-2"><span className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm">{activeTeams}/30 teams</span><span className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm">{questionsLoaded}/{overview.rounds.length} questions loaded</span></div>
         </div>
 
-        {!eventReady && <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">Keep the site access restricted while configuring the event. Captain sign-in and the public display remain dormant until there are exactly two Masters and 30 active Captain teams ({overview.masters.length}/2 Masters, {activeTeams}/30 teams, {overview.rounds.length}/6 rounds).</div>}
+        {!eventReady && <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">{activeTeams === 0 ? "Captain sign-in and the public display wake up as soon as there is at least one active team. Add your roster in the Teams tab." : `${questionsLoaded}/${overview.rounds.length} questions are loaded. Finish them in the Questions tab before opening the remaining rounds.`}</div>}
 
         <nav className="mb-5 flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1" aria-label="Master sections">
           {TABS.map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={"rounded-lg px-4 py-2 text-sm font-semibold " + (tab === key ? "bg-[#073f41] text-white" : "text-slate-600 hover:bg-slate-100")}>{label}</button>)}

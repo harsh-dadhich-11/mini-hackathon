@@ -1,4 +1,5 @@
 import { connect, type Database, type PreparedStatement } from "@/lib/db";
+import { discardCodes } from "@/lib/otp";
 import { cutoffTie, rankTeams, scoreSubmission, type Ranked, type Total } from "@/lib/scoring";
 
 export type Viewer = { email: string; displayName: string };
@@ -96,24 +97,23 @@ function friendlyConstraintError(error: unknown): never {
 
 // ---------------------------------------------------------------- Masters & setup
 
-export async function hasMasters() {
-  const row = await database().prepare("SELECT COUNT(*) AS count FROM masters").first<{ count: number }>();
-  return Boolean(row?.count);
-}
-
-/** Captain and public-display services stay dormant until both Masters and the complete 30-team roster exist. */
-export async function eventReady() {
-  const [mastersCount, teamsCount] = await database().batch([
-    database().prepare("SELECT COUNT(*) AS count FROM masters"),
-    database().prepare("SELECT COUNT(*) AS count FROM teams WHERE is_active = 1"),
-  ]);
-  return Number((mastersCount.results[0] as { count: number } | undefined)?.count ?? 0) === 2
-    && Number((teamsCount.results[0] as { count: number } | undefined)?.count ?? 0) === MAX_TEAMS;
-}
+/** The two Master accounts, hardcoded for now. Only these emails can sign in to /master. */
+export const MASTER_EMAILS = ["swasti@botconsulting.io", "harsh.dadhich@botconsulting.io"];
 
 export async function isMaster(email: string) {
-  const master = await database().prepare("SELECT email FROM masters WHERE email = ?").bind(normaliseEmail(email)).first();
-  return Boolean(master);
+  return MASTER_EMAILS.includes(normaliseEmail(email));
+}
+
+/** True once a Master has run the one-time setup that creates the round schedule. */
+export async function eventConfigured() {
+  const row = await database().prepare("SELECT key FROM event_settings WHERE key = 'event_name'").first();
+  return Boolean(row);
+}
+
+/** Captain and public-display services stay dormant until at least one active team exists (up to 30). */
+export async function eventReady() {
+  const row = await database().prepare("SELECT COUNT(*) AS count FROM teams WHERE is_active = 1").first<{ count: number }>();
+  return Number(row?.count ?? 0) >= 1;
 }
 
 export async function requireMaster(viewer: Viewer) {
@@ -121,12 +121,11 @@ export async function requireMaster(viewer: Viewer) {
 }
 
 export async function bootstrapEvent(viewer: Viewer) {
-  if (await hasMasters()) throw new Error("The event has already been configured.");
+  if (await eventConfigured()) throw new Error("The event has already been configured.");
   const db = database();
   const timestamp = now();
   const rounds = V4_ROUNDS;
   await db.batch([
-    db.prepare("INSERT INTO masters (email, display_name, added_at) VALUES (?, ?, ?)").bind(normaliseEmail(viewer.email), viewer.displayName, timestamp),
     db.prepare("INSERT INTO event_settings (key, value, updated_at) VALUES (?, ?, ?)").bind("event_name", "Boardroom Challenge", timestamp),
     db.prepare("INSERT INTO event_settings (key, value, updated_at) VALUES (?, ?, ?)").bind("display", JSON.stringify({ mode: "idle" }), timestamp),
     ...rounds.map(([roundId, roundOrder, title, phase, durationSeconds, multiplier]) =>
@@ -162,24 +161,6 @@ export async function upgradeEventToV4(viewer: Viewer) {
   return { upgraded: true };
 }
 
-export async function addMaster(viewer: Viewer, email: string, displayName: string) {
-  await requireMaster(viewer);
-  const cleanEmail = normaliseEmail(email);
-  if (!cleanEmail || !displayName.trim()) throw new Error("A name and email are required.");
-  const db = database();
-  const [captain, existing, count] = await db.batch([
-    db.prepare("SELECT id FROM teams WHERE captain_email = ?").bind(cleanEmail),
-    db.prepare("SELECT email FROM masters WHERE email = ?").bind(cleanEmail),
-    db.prepare("SELECT COUNT(*) AS count FROM masters"),
-  ]);
-  if (captain.results.length) throw new Error("A Master email cannot also be assigned to a Captain.");
-  if (!existing.results.length && Number((count.results[0] as { count: number } | undefined)?.count ?? 0) >= 2) throw new Error("Exactly two Master accounts are allowed.");
-  await db.prepare(
-    "INSERT INTO masters (email, display_name, added_at) VALUES (?, ?, ?) ON CONFLICT(email) DO UPDATE SET display_name = excluded.display_name",
-  ).bind(cleanEmail, displayName.trim(), now()).run();
-  await audit(viewer.email, "master.upsert", cleanEmail, { displayName: displayName.trim() });
-}
-
 // ---------------------------------------------------------------- Teams
 
 type TeamInput = { name: string; tableNumber: string; captainName: string; captainEmail: string };
@@ -193,8 +174,7 @@ function cleanTeam(input: TeamInput) {
 
 async function insertTeam(viewer: Viewer, input: TeamInput) {
   const team = cleanTeam(input);
-  const master = await database().prepare("SELECT email FROM masters WHERE email = ?").bind(team.captainEmail).first();
-  if (master) throw new Error("A Captain email cannot also be assigned to a Master.");
+  if (await isMaster(team.captainEmail)) throw new Error("A Captain email cannot also be assigned to a Master.");
   const teamId = id();
   const result = await database().prepare(
     "INSERT INTO teams (id, name, table_number, captain_name, captain_email, is_active, created_at) SELECT ?, ?, ?, ?, ?, 1, ? WHERE (SELECT COUNT(*) FROM teams WHERE is_active = 1) < ?",
@@ -234,15 +214,14 @@ export async function updateTeam(viewer: Viewer, input: TeamInput & { id: string
   const existing = await db.prepare("SELECT captain_email AS captainEmail FROM teams WHERE id = ?").bind(input.id).first<{ captainEmail: string }>();
   if (!existing) throw new Error("Team not found.");
   const team = cleanTeam(input);
-  const master = await db.prepare("SELECT email FROM masters WHERE email = ?").bind(team.captainEmail).first();
-  if (master) throw new Error("A Captain email cannot also be assigned to a Master.");
+  if (await isMaster(team.captainEmail)) throw new Error("A Captain email cannot also be assigned to a Master.");
   const emailChanged = team.captainEmail !== existing.captainEmail;
   await db.batch([
     db.prepare("UPDATE teams SET name = ?, table_number = ?, captain_name = ?, captain_email = ? WHERE id = ?").bind(team.name, team.tableNumber, team.captainName, team.captainEmail, input.id),
     ...(emailChanged
       ? [
         db.prepare("UPDATE captain_sessions SET revoked_at = ? WHERE team_id = ? AND revoked_at IS NULL").bind(now(), input.id),
-        db.prepare("DELETE FROM captain_codes WHERE email = ? AND used_at IS NULL").bind(existing.captainEmail),
+        discardCodes(existing.captainEmail),
       ]
       : []),
   ]).catch(friendlyConstraintError);
@@ -262,6 +241,25 @@ export async function setTeamActive(viewer: Viewer, teamId: string, active: bool
     ]);
   }
   await audit(viewer.email, active ? "team.activate" : "team.deactivate", teamId, {});
+}
+
+/** Only for teams that never played (test or mistaken entries). Teams with history must be deactivated instead. */
+export async function deleteTeam(viewer: Viewer, teamId: string) {
+  await requireMaster(viewer);
+  const db = database();
+  const team = await db.prepare(
+    `SELECT name, captain_email AS captainEmail,
+       (SELECT COUNT(*) FROM submissions WHERE team_id = t.id) + (SELECT COUNT(*) FROM score_lines WHERE team_id = t.id) + (SELECT COUNT(*) FROM qualifications WHERE team_id = t.id) AS history
+     FROM teams t WHERE t.id = ?`,
+  ).bind(teamId).first<{ name: string; captainEmail: string; history: number }>();
+  if (!team) throw new Error("Team not found.");
+  if (Number(team.history) > 0) throw new Error(`${team.name} already has answers or scores. Deactivate it instead.`);
+  await db.batch([
+    db.prepare("DELETE FROM captain_sessions WHERE team_id = ?").bind(teamId),
+    discardCodes(team.captainEmail),
+    db.prepare("DELETE FROM teams WHERE id = ?").bind(teamId),
+  ]);
+  await audit(viewer.email, "team.delete", teamId, { name: team.name, captainEmail: team.captainEmail });
 }
 
 // ---------------------------------------------------------------- Rounds & timer
@@ -664,6 +662,19 @@ export async function setDisplay(viewer: Viewer, display: Display) {
   await audit(viewer.email, "display.set", next.mode, next);
 }
 
+/** The Boardroom Choices visible at a reveal step. Step 1 shows #3, step 2 adds #2, step 3 adds #1. */
+function revealedChoices(round: RoundRecord, step: number) {
+  const options = parseOptions(round.optionsJson);
+  const answers = parseStrings(round.answersJson);
+  const evidence = parseStrings(round.evidenceJson);
+  return [2, 1, 0].slice(0, step).map((index) => ({
+    rank: index + 1,
+    optionId: answers[index],
+    text: options.find((option) => option.id === answers[index])?.text ?? "",
+    evidence: evidence[index] ?? "",
+  }));
+}
+
 type PublicTeam = { teamId: string; name: string; score: number; rank: number };
 
 async function stageEntries(stage: Stage): Promise<PublicTeam[]> {
@@ -699,15 +710,7 @@ export async function getPublicDisplay() {
       return { mode: "question" as const, serverNow, revision, ...base, state: round.state, closesAt: round.closesAt, pausedRemainingMs: round.pausedRemainingMs };
     }
     if (round.state !== "scored" && round.state !== "revealed") return { mode: "idle" as const, serverNow, revision };
-    const answers = parseStrings(round.answersJson);
-    const evidence = parseStrings(round.evidenceJson);
-    // Step 1 shows #3, step 2 adds #2, step 3 adds #1.
-    const revealed = [2, 1, 0].slice(0, display.step).map((index) => ({
-      rank: index + 1,
-      optionId: answers[index],
-      text: base.options.find((option) => option.id === answers[index])?.text ?? "",
-      evidence: evidence[index] ?? "",
-    }));
+    const revealed = revealedChoices(round, display.step);
     return { mode: "reveal" as const, serverNow, revision, ...base, step: display.step, revealed };
   }
   if (display.mode === "qualifiers") {
@@ -737,11 +740,12 @@ export async function getTeamState(team: TeamRecord) {
   await settleExpiredRounds();
   const round = await getCurrentRound();
   const serverNow = now();
-  if (!round) return { serverNow, team: { name: team.name, tableNumber: team.tableNumber }, round: null, submission: null as { choices: string[]; updatedAt: string } | null, standing: "official" as "official" | "playing-along" };
-  const [top5, top2, submission] = await Promise.all([
+  if (!round) return { serverNow, team: { name: team.name, tableNumber: team.tableNumber }, round: null, submission: null as { choices: string[]; updatedAt: string } | null, standing: "official" as "official" | "playing-along", reveal: null as TeamReveal | null };
+  const [top5, top2, submission, reveal] = await Promise.all([
     stageTeamIds("top5"),
     stageTeamIds("top2"),
     database().prepare("SELECT choices_json AS choicesJson, updated_at AS updatedAt FROM submissions WHERE team_id = ? AND round_id = ?").bind(team.id, round.id).first<{ choicesJson: string; updatedAt: string }>(),
+    teamReveal(team.id),
   ]);
   const standing = teamStanding(team.id, round.phase, top5, top2);
   return {
@@ -762,6 +766,30 @@ export async function getTeamState(team: TeamRecord) {
     },
     submission: submission ? { choices: parseStrings(submission.choicesJson), updatedAt: submission.updatedAt } : null,
     standing,
+    reveal,
+  };
+}
+
+type TeamReveal = { roundId: string; title: string; step: number; revealed: { rank: number; optionId: string; text: string }[]; myChoices: string[] | null; points: number | null };
+
+/** The projector's current reveal from this team's point of view. Only what the public screen already shows, plus the team's own answer. */
+async function teamReveal(teamId: string): Promise<TeamReveal | null> {
+  const { display } = await getDisplayState();
+  if (display.mode !== "reveal") return null;
+  const round = await getRound(display.roundId).catch(() => null);
+  if (!round || (round.state !== "scored" && round.state !== "revealed")) return null;
+  const db = database();
+  const [submission, score] = await Promise.all([
+    db.prepare("SELECT choices_json AS choicesJson FROM submissions WHERE team_id = ? AND round_id = ?").bind(teamId, round.id).first<{ choicesJson: string }>(),
+    db.prepare("SELECT COALESCE(override_points, points) AS points FROM score_lines WHERE team_id = ? AND round_id = ?").bind(teamId, round.id).first<{ points: number }>(),
+  ]);
+  return {
+    roundId: round.id,
+    title: round.title,
+    step: display.step,
+    revealed: revealedChoices(round, display.step).map(({ rank, optionId, text }) => ({ rank, optionId, text })),
+    myChoices: submission ? parseStrings(submission.choicesJson) : null,
+    points: display.step >= 3 ? Number(score?.points ?? 0) : null,
   };
 }
 
@@ -817,10 +845,9 @@ export async function getMasterOverview() {
   await settleExpiredRounds();
   const db = database();
   const current = await getCurrentRound();
-  const [teamRows, roundRows, masterRows, submissionCounts, currentSubmissions, scoreRows, qualificationRows, auditRows] = await db.batch([
+  const [teamRows, roundRows, submissionCounts, currentSubmissions, scoreRows, qualificationRows, auditRows] = await db.batch([
     db.prepare("SELECT t.id, t.name, t.table_number AS tableNumber, t.captain_name AS captainName, t.captain_email AS captainEmail, t.is_active AS isActive, t.last_sign_in_at AS lastSignInAt, (SELECT COUNT(*) FROM captain_sessions s WHERE s.team_id = t.id AND s.revoked_at IS NULL AND s.expires_at > ?) AS activeSessions FROM teams t ORDER BY t.name").bind(now()),
     db.prepare(`SELECT ${ROUND_COLUMNS} FROM rounds ORDER BY round_order`),
-    db.prepare("SELECT email, display_name AS displayName FROM masters ORDER BY added_at"),
     db.prepare("SELECT round_id AS roundId, COUNT(*) AS count FROM submissions GROUP BY round_id"),
     db.prepare("SELECT team_id AS teamId, updated_at AS updatedAt FROM submissions WHERE round_id = ?").bind(current?.id ?? ""),
     db.prepare("SELECT team_id AS teamId, round_id AS roundId, phase, points, override_points AS overridePoints, override_reason AS overrideReason FROM score_lines"),
@@ -833,7 +860,7 @@ export async function getMasterOverview() {
     currentRoundId: current?.id ?? null,
     teams: teamRows.results as unknown as (TeamRecord & { lastSignInAt: string | null; activeSessions: number })[],
     rounds: roundRows.results as unknown as RoundRecord[],
-    masters: masterRows.results as unknown as { email: string; displayName: string }[],
+    masters: MASTER_EMAILS.map((email) => ({ email, displayName: email })),
     submissionCounts: submissionCounts.results as unknown as { roundId: string; count: number }[],
     currentSubmissions: currentSubmissions.results as unknown as { teamId: string; updatedAt: string }[],
     scoreLines: scoreRows.results as unknown as { teamId: string; roundId: string; phase: string; points: number; overridePoints: number | null; overrideReason: string | null }[],

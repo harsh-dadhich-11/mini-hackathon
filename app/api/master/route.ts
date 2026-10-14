@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { masterRevokeAccess, masterSendAccess } from "@/lib/captain-auth";
 import {
-  addMaster,
   addTeam,
   confirmScoresGreen,
   controlRound,
+  deleteTeam,
   getMasterOverview,
   importRounds,
   importTeams,
@@ -33,10 +33,14 @@ export async function GET() {
   try {
     const viewer = await currentViewer();
     if (!viewer) return NextResponse.json({ error: "Sign in is required." }, { status: 401 });
-    await requireMaster(viewer);
+    try {
+      await requireMaster(viewer);
+    } catch {
+      return NextResponse.json({ error: "Master access is required." }, { status: 403 });
+    }
     return NextResponse.json(await getMasterOverview(), { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Master access is required." }, { status: 403 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "The overview could not be loaded." }, { status: 500 });
   }
 }
 
@@ -60,9 +64,9 @@ export async function POST(request: Request) {
         case "update-team": return updateTeam(viewer, { id: text(body.id), ...team(body) });
         case "transfer-captain": return updateTeam(viewer, { id: text(body.id), ...team(body), transfer: true });
         case "set-team-active": return setTeamActive(viewer, text(body.id), body.active === true);
+        case "delete-team": return deleteTeam(viewer, text(body.id));
         case "send-access": return masterSendAccess(viewer, text(body.id));
         case "revoke-access": return masterRevokeAccess(viewer, text(body.id));
-        case "add-master": return addMaster(viewer, text(body.email), text(body.displayName));
         case "upgrade-v4": return upgradeEventToV4(viewer);
         case "update-round":
           return updateRound(viewer, {
