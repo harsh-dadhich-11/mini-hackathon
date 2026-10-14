@@ -53,6 +53,7 @@ export function LeaderboardClient({ initial }: { initial: PublicDisplay }) {
 
   usePoll(async () => {
     const response = await fetch("/api/display", { cache: "no-store" }).catch(() => null);
+    if (response?.status === 401) { window.location.reload(); return; }
     if (!response?.ok) return;
     const next = await response.json() as PublicDisplay;
     sync(next.serverNow);
