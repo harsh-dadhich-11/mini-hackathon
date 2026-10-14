@@ -6,19 +6,19 @@ Production game control for 30 Boardroom Challenge teams. It has three deliberat
 |---|---|---|
 | `/team` | One rostered Captain per team | Its own team, own answer, current question only |
 | `/master` | The two named Masters | Rosters, questions, scoring, tie rulings and screen controls |
-| `/display` | Projector / confidence monitor | Small, published screen state only; never emails, submissions, controls or unrevealed keys |
+| `/display` | Projector, opened by a signed-in Master | Small, published screen state only; never emails, submissions, controls or unrevealed keys |
 
-`/leaderboard` remains as a backward-compatible alias for the display. Use `/display` on event day.
+The site root `/` redirects to `/team`, so the deployment URL is the link to share with Captains. `/display` and its alias `/leaderboard` (and `/api/display`) require a Master session; anyone else is sent to the `/master` sign-in.
 
 ## Security model
 
 - Exactly two non-playing Master email accounts are permitted. A Master email cannot be a Captain email.
 - For now the two Master emails are hardcoded in `MASTER_EMAILS` (`lib/event-store.ts`). Only they can sign in on `/master`, with an email OTP that follows the same rules as Captains. Master sessions are rechecked against that list on every request.
-- Exactly 30 active teams are required before Captain sign-in and the public display become live.
+- Captain sign-in and the display go live once at least one team is active (30 teams maximum).
 - A Captain enters the general `/team` URL, requests an email OTP, then enters the six-digit code. The app generates the codes, stores only their hashes in `login_codes`, and emails them through the Resend API. Codes are single-use, expire after 10 minutes, allow five failed attempts, and have a one-minute resend cooldown. Unknown emails receive the same generic response, and only addresses on the roster or Master list are emailed.
 - Captain sessions use a secure, HTTP-only, 12-hour cookie and are rechecked against the roster on every request. A Captain can read or write only their own team.
 - A Master can resend a Captain OTP, revoke all of a Captain's sessions, deactivate a team, or perform an audited emergency Captain transfer. A transfer immediately revokes the previous Captain.
-- The deployment must be kept access-restricted until the two Masters and all 30 Captain identities are configured. The app also keeps Captain and display services dormant until that configuration is complete.
+- Captain screens show no links to `/master` or `/display`. A Master can delete a team only while it has no answers or scores; otherwise deactivate it.
 
 ## Before the event
 
@@ -26,7 +26,7 @@ Production game control for 30 Boardroom Challenge teams. It has three deliberat
 2. Open `/master`, sign in with a code sent to one of the two Master emails, and click **Configure secure event**. This creates the six fixed rounds.
 3. In **Teams**, import the roster as `team name, table, captain name, captain email`. The console rejects duplicate Captain emails and Master/Captain overlap.
 4. In **Questions**, load all six questions. Each needs exactly six options, three distinct Boardroom Choices, evidence for each choice, and the fixed six-minute submission duration.
-5. Confirm the Master banner shows **2/2 Masters**, **30/30 teams**, and **6/6 rounds**. Only then make the Captain URL and `/display` reachable to the room.
+5. Confirm the Master banner has cleared (at least one active team and every question loaded), then share the Captain URL. Open `/display` on the projector laptop while signed in as a Master.
 6. Use **Resend OTP** in **Teams** to email a Captain a fresh code; QR cards must point only to the general `/team` sign-in URL.
 
 ## Six-round run book
@@ -56,7 +56,7 @@ Supabase provides the Postgres database. The app sends the email sign-in codes i
 
 ### 1. Supabase project
 
-1. Create a project at [supabase.com](https://supabase.com). Pick a region close to your Vercel functions, for example East US (N. Virginia) for Vercel's default `iad1`.
+1. Create a project at [supabase.com](https://supabase.com). Keep it in the same region as the Vercel functions. This event uses Sydney (`ap-southeast-2`), and `vercel.json` pins functions to `syd1` to match; change both together.
 2. **Connect** (top bar) → copy two connection strings, replacing `[YOUR-PASSWORD]` with the database password:
    - **Transaction pooler** (port 6543) → `DATABASE_URL`, which the app uses at runtime.
    - **Session pooler** (port 5432) → `DIRECT_URL`, which is used only for migrations.
@@ -73,7 +73,7 @@ Supabase provides the Postgres database. The app sends the email sign-in codes i
 
 ### 3. Vercel
 
-1. **Add New → Project** and import this repository. Next.js is detected automatically; use Node 22.
+1. **Add New → Project** and import this repository. Next.js is detected automatically; use Node 22. The function region comes from `vercel.json` (`syd1`).
 2. Add these environment variables for Production, and for Preview if you use it:
 
    | Variable | Value |
