@@ -48,3 +48,9 @@ next-env.d.ts
 # local libSQL databases
 *.db
 *.db-*
+
+# reference archives (never commit)
+*.zip
+
+# allow the env template
+!.env.example
